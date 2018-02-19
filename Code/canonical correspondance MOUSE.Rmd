@@ -1,0 +1,173 @@
+---
+title: "Canonical Correspondance Analysis Mouse Data"
+author: "Alissa Castleberry"
+date: "2/8/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.path = "./Figures") ##check this 
+```
+
+
+# Objectives
+
+A brief statement of the study / analysis objectives 
+
+# Methods
+
+Discuss any methods here.  Doesn't need to be extensive at this point.  
+
+# Results 
+
+This will be the bulk of the document.  Have multiple sub-sections here.  
+
+## Load packages
+
+```{r loadPackages}
+library(vegan)
+library(grid)
+library(ggplot2)
+```
+
+``` {r readInData}
+
+## Code from Guy's mouse_data.R code
+
+##set working directory
+setwd("~/Box Sync/OSU Brock Lab/Files for R")
+
+## read in data 
+bact.percentile.trans <-read.csv('16S_percentile_transposed.csv', sep=',', header=TRUE)
+metab.trans <- read.csv('metabolomic_transposed.csv', sep=',', header=TRUE)
+
+## Manipulate Data
+##names(bact.percentile.trans)
+##names(metab.trans)
+
+##metab.trans[1:5, 1:5]
+##bact.percentile.trans[1:5, 1:5]
+
+## remove first row since it is the taxlevel
+## assign it to a separate vector
+bact.percentile.trans[1,-1]
+tax.level <- as.numeric(bact.percentile.trans[1,-1])
+table(tax.level)
+bact.percentile.trans <- bact.percentile.trans[-(1),]
+
+## Make first column the rownames (i.e., sample names)
+## Then remove it and transform to a matrix
+rownames(bact.percentile.trans) <- bact.percentile.trans[,1]
+bact.percentile.trans <- bact.percentile.trans[,-1]
+bact.percentile.trans <- as.matrix(bact.percentile.trans)
+
+## same with metabolites
+rownames(metab.trans) <- metab.trans[, 1]
+metab.trans <- metab.trans[, -1]
+metab.trans <- as.matrix(metab.trans)
+
+## Get subset of microbes corresponding to different taxon levels
+table(tax.level)
+
+idx2 <- which(tax.level == 2)
+bact.tax2 <- bact.percentile.trans[,idx2]
+
+taxon <- unique(tax.level)
+
+## Create different matrices for each taxon level
+## Assign these to 'slots' in the list below
+bact.list <- vector("list", length = length(taxon))
+for (i in 1:length(taxon)) {
+  idx <- which(tax.level == taxon[i])
+  bact.list[[i]] <- bact.percentile.trans[,idx]
+}
+
+names(bact.list) <- taxon
+is(bact.list[[1]]) ## extracts the element in the first position in the list
+is(bact.list[1])  ## a subset that is a list
+```
+
+```{r CCA}
+####################################################################
+## Canonical Correspondance Analysis on Mouse Data 
+## From CRC Canonical Correspondance Analysis code (method 3)
+####################################################################
+
+##confirm rows are samples and columns are bacteria/metabolites
+rownames(bact.list[[5]])
+colnames(bact.list[[5]])
+rownames(metab.trans)
+colnames(metab.trans)
+##confirm microbes and metabolites have same number of samples
+##first column should be the same
+dim(bact.list[[5]])
+dim(metab.trans)
+
+##had overfitting of the model, need to limit to only a few 
+##only fifteen samples, have to limit to less than 15
+microb.adonis <- adonis(bact.list[[5]] ~., data=as.data.frame(metab.trans)[,1:10])
+
+## Potential solutions to overfitting: Run PCA on metab.data and then use as input into adonis
+
+#Extract the best variables
+##in this case, only one variable (lipid) is significant at the 0.05 level
+##increased to 0.1 - results in two variables
+bestMetabVariables<-rownames(microb.adonis$aov.tab)[microb.adonis$aov.tab$"Pr(>F)"<=0.1]
+bestMetabVariables
+#Last two are NA entries, so we have to remove them
+bestMetabVariables<-bestMetabVariables[!is.na(bestMetabVariables)]
+
+
+#We are now going to use only those environmental variables in cca that were found significant
+eval(parse(text=paste("sol2 <- cca(bact.list[[5]] ~ ",do.call(paste,c(as.list(bestMetabVariables),sep=" + ")),",data=as.data.frame(metab.trans))",sep="")))
+sol2
+
+#You can use the following to use all the environmental variables
+#sol2<-cca(microbe.list[[6]] ~ ., data=as.data.frame(metab.data))
+
+
+scrs<-scores(sol2,display=c("sp","wa","lc","bp","cn"))
+attributes(scrs)
+
+#Extract site data first
+df_sites<-data.frame(scrs$sites,t(as.data.frame(strsplit(rownames(scrs$sites),"_"))))
+colnames(df_sites)<-c("x","y","id")
+
+## merge in the clinical data for plotting
+##don't need for mouse data? 
+##names(clin.data)
+##df_sites <- merge(df_sites, clin.data[,1:6], by.x = "id", by.y = "id")
+##head(df_sites)
+##dim(df_sites)
+##dim(clin.data)
+
+##need to figure out how to sort mouse data - cannot find 
+##df_sites$case <- factor(df_sites$case, levels = c(0,1), labels = c("control", "case"))
+
+
+#Draw sites
+p<-ggplot()
+p<-p+geom_point(data=df_sites,aes(x,y))##,colour=case))
+
+#Draw biplots
+scrs$biplot
+multiplier <- vegan:::ordiArrowMul(scrs$biplot)
+
+df_arrows<- scrs$biplot*multiplier
+colnames(df_arrows)<-c("x","y")
+df_arrows=as.data.frame(df_arrows)
+
+p<-p+geom_segment(data=df_arrows, aes(x = 0, y = 0, xend = x, yend = y),
+                  arrow = arrow(length = unit(0.2, "cm")),color="#808080",alpha=1)
+
+
+p<-p+geom_text(data=as.data.frame(df_arrows*1.1),aes(x, y, label = rownames(df_arrows)),color="#808080",alpha=0.5)
+
+##p<-p+geom_point(data=df_species,aes(x,y))+scale_shape_manual("",values=2)
+
+p<-p+theme_bw()
+
+print(p)
+```
+

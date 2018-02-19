@@ -1,0 +1,246 @@
+---
+title: "Canonical Correspondance Analysis CRC Data "
+author: "Alissa Castleberry"
+date: "2/5/2018"
+output: 
+  word_document: 
+    toc: yes
+  html_document: 
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.path = "./Figures") ##check this
+```
+
+# Objectives
+
+A brief statement of the study / analysis objectives 
+
+# Methods
+
+Discuss any methods here.  Doesn't need to be extensive at this point.  
+
+# Results 
+
+This will be the bulk of the document.  Have multiple sub-sections here.  
+
+## Load packages
+
+```{r loadPackages}
+library(vegan)
+library(grid)
+library(ggplot2)
+```
+
+## Data 
+
+There are three main data sets to read in, clinical data, metabolomics data, and microbiome data.  The microbiome data are further processed by taxa level (species, genus, etc.).  
+
+```{r readData, results ='hide'}
+
+##working directory
+setwd("~/Box Sync/OSU Brock Lab/Files for R")
+
+## Read in MicroBiome Data
+microbe.data <- read.csv("CRC_Microbes.pone.0152126.s003.csv", header = TRUE, row.names = 1)
+microbe.meta <- read.csv("MicrobeMeta.csv", header = TRUE)
+
+## Ok, so we need to transpose these ...
+microbe.data <- as.matrix(microbe.data)
+microbe.data <- t(microbe.data)
+microbe.data[1:5, 1:5]
+
+
+## Meta data = usefule for subsetting by taxanomic level
+##dim(microbe.meta)
+##names(microbe.meta)
+
+## Subset the meta data to coincide with our filtered microbe.data
+idx.sub <- which(microbe.meta$ID %in% colnames(microbe.data))
+
+microbe.meta.sub <- microbe.meta[idx.sub, ]
+
+## Put in the same order
+microbe.meta.sub <- microbe.meta.sub[order(microbe.meta.sub$ID), ]
+microbe.data <- microbe.data[,order(colnames(microbe.data))]
+
+all.equal(colnames(microbe.data), as.character(microbe.meta.sub$ID))
+
+
+tab.taxon <- table(microbe.meta.sub$Taxa.Level)
+taxon <- unique(microbe.meta.sub$Taxa.Level)
+taxon
+
+## Create different matrices for each taxon level
+## Assign these to 'slots' in the list below
+microbe.list <- vector("list", length = length(taxon))
+for (i in 1:length(taxon)) {
+  idx <- which(microbe.meta.sub$Taxa.Level == taxon[i])
+  microbe.list[[i]] <- microbe.data[,idx]
+}
+names(microbe.list) <- taxon
+is(microbe.list[[1]]) ## extracts the element in the first position in the list
+is(microbe.list[1])  ## a subset that is a list
+
+microbe.list[[1]]
+dim(microbe.list[[1]])
+## 118 subjects ...
+rownames(microbe.list[[1]])
+
+
+##read in metabolomics data next
+metab.data <- read.csv("CRC_Metabolites.pone.0152126.s002.csv", header = TRUE)
+rownames(metab.data) <- metab.data$ID
+metab.data <- metab.data[,-1]
+metab.data <- as.matrix(metab.data)
+metab.data <- t(metab.data)
+dim(metab.data)
+## ?? 131 subjects?
+
+sum(rownames(metab.data) %in% rownames(microbe.list[[1]]))
+
+idx <- which(rownames(metab.data) %in% rownames(microbe.list[[1]]))
+metab.data <- metab.data[idx, ]
+
+## sort both
+metab.data <- metab.data[order(rownames(metab.data)), ]
+for (i in 1:length(microbe.list)) {
+  microbe.list[[i]] <- microbe.list[[i]][order(rownames(microbe.list[[i]])), ]
+}
+all.equal(rownames(metab.data), rownames(microbe.list[[i]]))
+
+clin.data <- read.csv("CRC_Clinical.pone.0152126.s004.csv", header = TRUE)
+head(clin.data)
+names(clin.data) <- tolower(names(clin.data))
+names(clin.data) <- gsub("_", ".", names(clin.data))
+names(clin.data)
+## Main one is CASE status ...
+dim(clin.data)
+
+## subset clin.data and sort
+idx <- which(clin.data$id %in% rownames(metab.data))
+clin.data <- clin.data[idx, ]
+clin.data <- clin.data[order(clin.data$id), ]
+all.equal(as.character(clin.data$id), rownames(metab.data))
+```
+
+
+## Canonical Correspondence Analysis 
+
+Here explain the steps of the canonical correspondence analysis.  You probably want to subdivide this section into subsections as well. 
+
+
+### Step 1 - CCA to full data 
+
+```{r CCAall}
+####################################################################
+## Method 1: CANONICAL CORRESPONDENCE ANALYSIS
+##Code from: http://rfunctions.blogspot.com/2016/11/canonical-correspondence-analysis-cca.html
+####################################################################
+
+##creates a messy plot - may have to focus on modifying the method below
+ccamodel <- cca(microbe.list[[6]]~., as.data.frame(metab.data))
+plot(ccamodel)
+finalmodel<- ordistep(ccamodel, scope=formula(ccamodel))
+help(ordistep)
+vif.cca(finalmodel)
+plot(finalmodel)
+summary(finalmodel)
+```
+
+###Step 2 - CCA to only significant predictors 
+
+Description here --uses CCA and makes plot based on color 
+
+```{r, eval=FALSE, echo=FALSE}
+
+####################################################################
+## Method 2: CANONICAL CORRESPONDENCE ANALYSIS
+##Code from: http://userweb.eng.gla.ac.uk/umer.ijaz/bioinformatics/ecological.html
+####################################################################
+
+dim(microbe.list[[6]])
+dim(metab.data)
+dist.mat<-vegdist(microbe.list[[6]],method="bray")
+
+#Use adonis to find significant environmental variables 
+##this line is for if using all of the variables 
+#microb.adonis <- adonis(microbe.list[[6]] ~., data=as.data.frame(metab.data))
+
+##but instead we had overfitting of the model, need to limit to only a few variables at a time
+microb.adonis <- adonis(microbe.list[[6]] ~., data=as.data.frame(metab.data)[,1:20])
+##microb.adonis
+
+## Run PCA on metab.data and then use as input into adonis?
+##Sparse CCA?
+
+#Extract the best variables
+bestMetabVariables<-rownames(microb.adonis$aov.tab)[microb.adonis$aov.tab$"Pr(>F)"<=0.05]
+#Last two are NA entries, so we have to remove them
+bestMetabVariables<-bestMetabVariables[!is.na(bestMetabVariables)]
+#We are now going to use only those environmental variables in cca that were found significant
+eval(parse(text=paste("sol <- cca(microbe.list[[6]] ~ ",do.call(paste,c(as.list(bestMetabVariables),sep=" + ")),",data=as.data.frame(metab.data))",sep="")))
+sol
+
+#You can use the following to use all the environmental variables - as in step 1? 
+#sol<-cca(microbe.list[[6]] ~ ., data=as.data.frame(metab.data))
+
+scrs<-scores(sol,display=c("sp","wa","lc","bp","cn"))
+attributes(scrs)
+
+#Extract site data first
+df_sites<-data.frame(scrs$sites,t(as.data.frame(strsplit(rownames(scrs$sites),"_"))))
+colnames(df_sites)<-c("x","y","id")
+## merge in the clinical data for plotting
+names(clin.data)
+df_sites <- merge(df_sites, clin.data[,1:6], by.x = "id", by.y = "id")
+head(df_sites)
+dim(df_sites)
+dim(clin.data)
+
+df_sites$case <- factor(df_sites$case, levels = c(0,1), labels = c("control", "case"))
+
+
+#Draw sites
+p<-ggplot()
+p<-p+geom_point(data=df_sites,aes(x,y,colour=case))
+print(p)
+
+#Draw biplots
+scrs$biplot
+multiplier <- vegan:::ordiArrowMul(scrs$biplot)
+
+df_arrows<- scrs$biplot*multiplier
+colnames(df_arrows)<-c("x","y")
+df_arrows=as.data.frame(df_arrows)
+
+p<-p+geom_segment(data=df_arrows, aes(x = 0, y = 0, xend = x, yend = y),
+                  arrow = arrow(length = unit(0.2, "cm")),color="#808080",alpha=1)
+
+print(p)
+
+p<-p+geom_text(data=as.data.frame(df_arrows*1.1),aes(x, y, label = rownames(df_arrows)),color="#808080",alpha=0.5)
+
+# Draw species
+#df_species<- as.data.frame(scrs$species)
+#colnames(df_species)<-c("x","y")
+
+# Either choose text or points
+#p<-p+geom_text(data=df_species,aes(x,y,label=rownames(df_species)))
+#p<-p+geom_point(data=df_species,aes(x,y,shape="Species"))+scale_shape_manual("",values=2)
+##take out species to avoid that weird thing with the triangles
+##p<-p+geom_point(data=df_species,aes(x,y))+scale_shape_manual("",values=2)
+
+p<-p+theme_bw()
+
+print(p)
+
+pdf("CCA.pdf")
+print(p)
+dev.off()
+
+
+
+```
